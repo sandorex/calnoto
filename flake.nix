@@ -14,69 +14,36 @@
       VERGEN_IDEMPOTENT = "1";
       VERGEN_GIT_SHA = if (self ? "rev") then (builtins.substring 0 7 self.rev) else "nix-dirty";
 
-      devTools = with pkgs; [
-        # LSPs
-        vscode-langservers-extracted
-        typescript-language-server
-        rust-analyzer
-
-        # rust dev stuff
-        rust-analyzer
-        clippy
-        rustfmt
-      ];
+      # NOTE this determines the minimal supported godot version
+      godot = pkgs.godotPackages_4_5;
     in
     {
       devShells.${system} = rec {
         default = desktop;
 
-        desktop-build = pkgs.mkShell {
+        desktop = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             git
             cargo
+            rust-analyzer
+            clippy
+            rustfmt
             rustc
-            nodejs_24
-            pkg-config
-            gobject-introspection
+
+            godot.godot
+            godot.export-templates-bin
           ];
-
-          buildInputs = with pkgs; [
-            at-spi2-atk
-            atkmm
-            cairo
-            gdk-pixbuf
-            glib
-            gtk3
-            harfbuzz
-            librsvg
-            libsoup_3
-            pango
-            webkitgtk_4_1
-            openssl
-          ];
-
-          inherit VERGEN_IDEMPOTENT VERGEN_GIT_SHA;
-        };
-
-        desktop = pkgs.mkShell {
-          inputsFrom = [ desktop-build ];
-
-          nativeBuildInputs = devTools;
-
-          inherit VERGEN_IDEMPOTENT VERGEN_GIT_SHA;
-        };
-
-        # TODO
-        android-build = pkgs.mkShell {
-          nativeBuildInputs = with pkgs []; [];
 
           inherit VERGEN_IDEMPOTENT VERGEN_GIT_SHA;
         };
 
         android = pkgs.mkShell {
-          inputsFrom = [ android-build ];
+          inputsFrom = [ desktop ];
 
-          nativeBuildInputs = devTools;
+          # TODO add android sdk and adb
+          nativeBuildInputs = with pkgs; [
+            javaPackages.compiler.openjdk17
+          ];
 
           inherit VERGEN_IDEMPOTENT VERGEN_GIT_SHA;
         };
