@@ -10,6 +10,20 @@ unsafe impl ExtensionLibrary for MyExtension {}
 struct TestClass;
 
 #[godot_api]
+impl TestClass {
+    #[func]
+    fn clone(&mut self, path: String) {
+        use git2::Repository;
+
+        let url = "https://github.com/sandorex/icalendar.txt";
+        let repo = match Repository::clone(url, &path) {
+            Ok(repo) => repo,
+            Err(e) => panic!("failed to clone: {}", e),
+        };
+    }
+}
+
+#[godot_api]
 impl INode for TestClass {
     fn init(_base: Base<Node>) -> Self {
         godot_print!("Got initialized");
