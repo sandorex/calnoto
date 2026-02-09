@@ -1,3 +1,4 @@
 target/
 .godot/
 build/
+rust/include/

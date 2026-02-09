@@ -7,3 +7,4 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
+duct = "1.1.1"

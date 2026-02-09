@@ -11,5 +11,5 @@ fn main() {
         .with_language(Language::Cxx)
         .generate()
         .expect("Unable to generate C++ bindings")
-        .write_to_file("target/bindings/calnoto-core.hh");
+        .write_to_file("include/calnoto-core.hh");
 }
