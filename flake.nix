@@ -1,10 +1,6 @@
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs = { self, nixpkgs, fenix, ...  }:
@@ -25,9 +21,6 @@
       VERGEN_IDEMPOTENT = "1";
       VERGEN_GIT_SHA = if (self ? "rev") then (builtins.substring 0 7 self.rev) else "nix-dirty";
 
-      # NOTE this the godot version used to build the application
-      godot = pkgs.godotPackages_4_5;
-
       # copy all of these when copying from godot config.gradle
       # https://github.com/godotengine/godot/blob/4.5/platform/android/java/app/config.gradle
       androidVersion = {
@@ -43,67 +36,106 @@
         desktop = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             git
-            godot.godot
-            godot.export-templates-bin
 
             cargo
             rust-analyzer
             clippy
             rustfmt
             rustc
+
+            gdb
+            qt6.wrapQtAppsHook
+            makeWrapper
+            bashInteractive
+            ninja
+            just
+            cmake
+            validatePkgConfig
+            # gcc
+            wayland-scanner
+            # zenity
+            # libffi
+            # python313
+            # patchelf
+
+            # TODO temp equivalent to qt6.full
+            qt6.qtbase
+            qt6.qt3d
+            qt6.qt5compat
+            qt6.qtcharts
+            qt6.qtconnectivity
+            qt6.qtdatavis3d
+            qt6.qtdeclarative
+            qt6.qtdoc
+            qt6.qtgraphs
+            qt6.qtgrpc
+            qt6.qthttpserver
+            qt6.qtimageformats
+            qt6.qtlanguageserver
+            qt6.qtlocation
+            qt6.qtlottie
+            qt6.qtmultimedia
+            qt6.qtmqtt
+            qt6.qtnetworkauth
+            qt6.qtpositioning
+            qt6.qtsensors
+            qt6.qtserialbus
+            qt6.qtserialport
+            qt6.qtshadertools
+            qt6.qtspeech
+            qt6.qtquick3d
+            qt6.qtquick3dphysics
+            qt6.qtquickeffectmaker
+            qt6.qtquicktimeline
+            qt6.qtremoteobjects
+            qt6.qtsvg
+            qt6.qtscxml
+            qt6.qttools
+            qt6.qttranslations
+            qt6.qtvirtualkeyboard
+            qt6.qtwebchannel
+            qt6.qtwebengine
+            qt6.qtwebsockets
+            qt6.qtwebview
           ];
 
+          # runtime dependencies
+          buildInputs = with pkgs; [
+            vulkan-headers
+            vulkan-loader
+            libGL
+            libusb1
+            libayatana-appindicator
+            libdrm
+            mesa
+            wayland
+            wayland-protocols
+            pipewire
+            libpulseaudio
+            alsa-lib
+            dbus
+            libxkbcommon
+            xorg.libX11
+            xorg.libXScrnSaver
+            xorg.libXcursor
+            xorg.libXext
+            xorg.libXfixes
+            xorg.libXi
+            xorg.libXrandr
+          ];
+
+          # use Ninja generator by default
+          CMAKE_GENERATOR = "Ninja";
+
           inherit VERGEN_IDEMPOTENT VERGEN_GIT_SHA;
+
+          # set the environment variables that unpatched Qt apps expect
+          shellHook = ''
+            bashdir=$(mktemp -d)
+            makeWrapper "$(type -p bash)" "$bashdir/bash" "''${qtWrapperArgs[@]}"
+            exec "$bashdir/bash"
+          '';
         };
-
-        android =
-          let
-            androidComposition = pkgs.androidenv.composeAndroidPackages {
-              buildToolsVersions = [ androidVersion.buildTools ];
-              platformVersions = [ androidVersion.sdk ];
-              ndkVersions = [ androidVersion.ndk ];
-              # platformToolsVersion = ""; # NOTE not in config.gradle??
-              includeNDK = true;
-
-              # TODO idk if its needed
-              # includeExtras = [ "extras;google;auto" ];
-            };
-
-            pkgs' = pkgs.pkgsCross.aarch64-android-prebuilt;
-          in
-          pkgs'.mkShell rec {
-            nativeBuildInputs = with pkgs; [
-              git
-              # TODO godot does not find the templates
-              godot.godot
-              godot.export-templates
-
-              (with fenix.packages.${system}; combine [
-                stable.toolchain
-                targets.aarch64-linux-android.stable.rust-std
-                targets.x86_64-linux-android.stable.rust-std # for emulator
-              ])
-
-              androidComposition.androidsdk
-              javaPackages.compiler.openjdk17
-
-              # cc crate looks for `cc` executable instead of $CC env var and so fails to build
-              (pkgs.linkFarm "gcc-link" [
-                {
-                  name = "bin/cc";
-                  path = "${pkgs'.stdenv.cc}/bin/${pkgs'.stdenv.cc.targetPrefix}cc";
-                }
-              ])
-            ];
-
-            ANDROID_HOME = "${androidComposition.androidsdk}/libexec/android-sdk";
-            ANDROID_NDK_ROOT = "${ANDROID_HOME}/ndk-bundle";
-            GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${ANDROID_HOME}/build-tools/${androidVersion.buildTools}/aapt2";
-
-            CARGO_BUILD_TARGET = "aarch64-linux-android";
-
-            inherit VERGEN_IDEMPOTENT VERGEN_GIT_SHA;
-          };
       };
     };
 }

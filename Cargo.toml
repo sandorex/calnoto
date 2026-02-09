@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+
+members = [
+    "rust",
+    "xtask",
+    "crates/icalendar_txt",
+    "crates/todo_txt",
+]
+default-members = [ "rust" ]
+
+[workspace.package]
+version = "0.1.0"
+authors = [ "Sandorex" ]
+description = "Calendar notes and todos all in one, synced using pure git"
+repository = "https://github.com/sandorex/calnoto"
