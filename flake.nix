@@ -42,6 +42,7 @@
             clippy
             rustfmt
             rustc
+            ccls
 
             gdb
             qt6.wrapQtAppsHook

@@ -2,12 +2,14 @@
 resolver = "3"
 
 members = [
-    "rust",
+    "core",
     "xtask",
     "crates/icalendar_txt",
     "crates/todo_txt",
+    "crates/sync",
+    "crates/cli",
 ]
-default-members = [ "rust" ]
+default-members = [ "cli" ]
 
 [workspace.package]
 version = "0.1.0"
