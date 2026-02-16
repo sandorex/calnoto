@@ -6,3 +6,5 @@ edition = "2024"
 authors.workspace = true
 
 [dependencies]
+chrono = "0.4.43"
+nom = "8.0.0"
