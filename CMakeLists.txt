@@ -20,6 +20,18 @@ message("Build type: ${CMAKE_BUILD_TYPE}")
 
 add_subdirectory(core)
 
+if (ANDROID)
+    FetchContent_Declare(
+        android_openssl
+        DOWNLOAD_EXTRACT_TIMESTAMP true
+        URL https://github.com/KDAB/android_openssl/archive/refs/heads/master.zip
+        #      URL_HASH MD5=c97d6ad774fab16be63b0ab40f78d945 #optional
+    )
+
+    FetchContent_MakeAvailable(android_openssl)
+    include(${android_openssl_SOURCE_DIR}/android_openssl.cmake)
+endif()
+
 set(SOURCES
     src/main.cpp
     src/qml.qrc
@@ -41,8 +53,12 @@ target_link_libraries(calnoto
     PUBLIC
     Qt6::Core
     Qt6::Quick
-    calnoto::core
+    # calnoto::core
 )
+
+if (ANDROID)
+    add_android_openssl_libraries(calnoto)
+endif()
 
 set_target_properties(calnoto PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER io.sandorex.github.calnoto

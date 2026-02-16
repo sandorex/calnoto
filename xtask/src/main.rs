@@ -1,12 +1,11 @@
+mod cli;
+
 use std::path::{Path, PathBuf};
 use duct::cmd;
+use clap::Parser;
 
-// TODO add android-debug android-release win32 for building on linux
-const HELP: &str = r#"Command available for 'cargo xtask <cmd>':
-  build [debug|release] - build for current platform (defaults to release)
-  test [cxx|rust]       - runs rust and/or cxx tests
-  clean                 - cleans all compilation leftovers
-"#;
+const BUILD_DIR: &str = "build";
+const BUILD_DIR_ANDROID: &str = "build-android";
 
 fn project_root() -> PathBuf {
     Path::new(&env!("CARGO_MANIFEST_DIR"))
@@ -16,96 +15,47 @@ fn project_root() -> PathBuf {
         .to_path_buf()
 }
 
-// TODO at this point just add clap cli
-fn main() {
-    let mut args = std::env::args();
-
-    // print help when no arguments passed
-    if args.len() <= 1 {
-        eprintln!("{HELP}");
-        std::process::exit(1);
-    }
-
-    // first arg is the path to this binary
-    args.next();
-
-    let cmd = args.next().unwrap();
-    let arg = args.next().unwrap_or_default().to_lowercase();
-    match cmd.to_lowercase().as_str() {
-        "build" => match arg.as_str() {
-            "debug" => build(true),
-            // NOTE defaulting to release
-            "release" | "" => build(false),
-            "clean" => {
-                println!("Cleaning up..");
-                let _ = std::fs::remove_dir_all("target");
-            }
-            x @ _ => {
-                eprintln!("Invalid build type {x:?}");
-                std::process::exit(1);
-            }
-        },
-        // "android" => unimplemented!("building for android is not yet implemented"),
-        "test" => unimplemented!("testing is not yet implemented"),
-        _ => {
-            eprintln!("Invalid command {cmd:?}\n\n{HELP}");
+fn get_generator() -> String {
+    if cfg!(target_os = "windows") {
+        // let cmake pick the default for windows
+        "".to_string()
+    } else {
+        match std::process::Command::new("ninja").output() {
+            Ok(_) => "-GNinja".to_string(),
+            // TODO is the space gonna be a problem?
+            Err(_) => "-GUnix Makefiles".to_string(),
         }
     }
 }
 
-const LIB_PREFIX: &str = if cfg!(target_family = "unix") {
-    "lib"
-} else {
-    ""
-};
-
-const LIB_SUFFIX: &str = if cfg!(target_family = "unix") {
-    ".a"
-} else {
-    ".lib"
-};
-
-const EXE_SUFFIX: &str = if cfg!(target_family = "windows") {
-    ".exe"
-} else {
-    ""
-};
-
-fn build(debug: bool) {
-    // always starting in root directory
+// TODO win32 build on linux
+fn main() {
+    let args = cli::Cli::parse();
     let root = project_root();
-    std::env::set_current_dir(&root).unwrap();
 
-    let build_type = if debug { "debug" } else { "release" };
+    match &args.cmd {
+        cli::CliCommands::Build(x) => build(&root, &x),
+        cli::CliCommands::BuildAndroid(x) => build_android(&root, &x),
+        cli::CliCommands::Clean => {
+            println!("Cleaning up build directories..");
+            let _ = std::fs::remove_dir_all(root.join(BUILD_DIR));
+            let _ = std::fs::remove_dir_all(root.join(BUILD_DIR_ANDROID));
+        },
+        _ => todo!(),
+    }
+}
 
-    println!("Building rust core");
+fn build(root: &Path, args: &cli::CmdBuildArgs) {
+    let build_dir = root.join(BUILD_DIR);
 
-    // build the default package (core)
-    (if debug {
-        cmd!("cargo", "build")
-    } else {
-        cmd!("cargo", "build", "--release")
-    })
-        .run()
-        .unwrap();
-
-    let out_dir = root
-        .join("target")
-        .join(build_type);
-
-    let cmake_out_dir = out_dir.join("cmake");
-
-    let lib_path = out_dir.join(format!("{LIB_PREFIX}calnoto_core{LIB_SUFFIX}"));
-    let lib_include = root.join("rust").join("include");
-
-    println!("Configuring cmake");
-
-    // Configure cmake only if it does not exist
-    if !cmake_out_dir.exists() {
-        cmd!("cmake", "-B", &cmake_out_dir,
-            format!("-DRUST_LIB={}", lib_path.display()),
-            format!("-DRUST_INCLUDE={}", lib_include.display()),
-            if debug {
+    println!(":: Building {}-{}", std::env::consts::OS, if args.debug { "debug" } else { "release" });
+    if !build_dir.exists() {
+        println!(":: Configuring cmake");
+        cmd!("cmake",
+            "-S", &root,
+            "-B", &build_dir,
+            get_generator(),
+            if args.debug {
                 "-DCMAKE_BUILD_TYPE=Debug"
             } else {
                 "-DCMAKE_BUILD_TYPE=Release"
@@ -114,11 +64,43 @@ fn build(debug: bool) {
             .unwrap();
     }
 
-    println!("Building final executable");
+    println!(":: Building using cmake");
 
-    cmd!("cmake", "--build", &cmake_out_dir)
+    cmd!("cmake", "--build", &build_dir)
         .run()
         .unwrap();
-
-    println!("Executable compiled at: {}", cmake_out_dir.join(format!("calnoto{EXE_SUFFIX}")).display())
 }
+
+fn build_android(root: &Path, args: &cli::CmdBuildArgs) {
+    let build_dir = root.join(BUILD_DIR_ANDROID);
+
+    // allow pointing to specific qt-cmake version
+    let qt_cmake = std::env::var("QT_CMAKE").unwrap_or_else(|_| "qt-cmake".to_string());
+    let sdk_root = std::env::var("ANDROID_SDK_ROOT").unwrap();
+    let ndk_root = std::env::var("ANDROID_NDK_ROOT").unwrap();
+
+    println!(":: Building android-{}", if args.debug { "debug" } else { "release" });
+    if !build_dir.exists() {
+        println!(":: Configuring cmake");
+        cmd!(qt_cmake,
+            format!("-DANDROID_SDK_ROOT={sdk_root}"),
+            format!("-DANDROID_NDK_ROOT={ndk_root}"),
+            "-S", &root,
+            "-B", &build_dir,
+            get_generator(),
+            if args.debug {
+                "-DCMAKE_BUILD_TYPE=Debug"
+            } else {
+                "-DCMAKE_BUILD_TYPE=Release"
+            })
+            .run()
+            .unwrap();
+    }
+
+    println!(":: Building using cmake");
+
+    cmd!("cmake", "--build", &build_dir)
+        .run()
+        .unwrap();
+}
+

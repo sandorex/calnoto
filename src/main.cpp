@@ -2,10 +2,10 @@
 #include <QQmlApplicationEngine>
 #include <iostream>
 
-#include "calnoto-core.hh"
+// #include "calnoto-core.hh"
 
 int main(int argc, char *argv[]) {
-    std::cout << get_number() << '\n';
+    // std::cout << get_number() << '\n';
 
     QGuiApplication app(argc, argv);
 
