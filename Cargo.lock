@@ -272,6 +272,10 @@ dependencies = [
 [[package]]
 name = "icalendar_txt"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "nom",
+]
 
 [[package]]
 name = "indexmap"
