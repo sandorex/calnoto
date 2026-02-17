@@ -8,7 +8,6 @@ use chrono::NaiveDate;
 use crate::entry::{TodoEntry, TodoEntryMetadata};
 
 pub fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
-    // let num = map_res(digit1, str::parse::<u16>);
     let (leftover, (year, month, day)) = (
         // parse year
         map_res(digit1, str::parse::<u16>),
@@ -55,7 +54,7 @@ pub fn parse_entry(input: &str) -> IResult<&str, TodoEntry> {
         completion_date,
         creation_date,
         description: description.to_string(),
-        metadata: Some(metadata)
+        metadata,
     }))
 }
 
@@ -71,7 +70,7 @@ pub fn parse_file(input: &str) -> IResult<&str, Vec<TodoEntry>> {
 }
 
 /// Parse description of todo entry
-pub fn parse_description(input: &str) -> IResult<&str, TodoEntryMetadata> {
+pub fn parse_description(input: &str) -> IResult<&str, Option<TodoEntryMetadata>> {
     let mut metadata = TodoEntryMetadata::default();
 
     let (leftover, words) = (separated_list0(
@@ -121,7 +120,8 @@ pub fn parse_description(input: &str) -> IResult<&str, TodoEntryMetadata> {
     // trim whitespace on ends
     metadata.description = metadata.description.trim().to_string();
 
-    Ok((leftover, metadata))
+    // do not return empty metadata
+    Ok((leftover, if metadata.is_empty() { None } else { Some(metadata) }))
 }
 
 #[cfg(test)]
@@ -141,7 +141,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(Into::<String>::into(&entry), "x (Z) 2026-01-01 2026-01-01 Some kind of +task @test location:italy".to_string());
+        assert_eq!(format!("{}", &entry), "x (Z) 2026-01-01 2026-01-01 Some kind of +task @test location:italy".to_string());
     }
 
     #[test]
@@ -152,22 +152,26 @@ mod tests {
 
     #[test]
     fn todo_entry_parse_description() {
+        // no metadata if there is no tags or properties
+        let (_, metadata) = parse_description("Barbecue with friends at toms_house").unwrap();
+        assert_eq!(metadata, None);
+
         let (_, metadata) = parse_description("Barbecue with @friends at +toms_house key:val").unwrap();
-        assert_eq!(metadata, TodoEntryMetadata {
+        assert_eq!(metadata, Some(TodoEntryMetadata {
             description: "Barbecue with friends at toms_house".to_string(),
             projects: vec!["toms_house".to_string()],
             contexts: vec!["friends".to_string()],
             properties: HashMap::from([ ("key".to_string(), "val".to_string()) ]),
-        });
+        }));
 
         // NOTE as the format is human-editable it has to be fine with garbage input
         let (_, metadata) = parse_description("A num:1 tricky: o+ne w+ith+ :multiple malf@rmed we1.;rd things??!?").unwrap();
-        assert_eq!(metadata, TodoEntryMetadata {
+        assert_eq!(metadata, Some(TodoEntryMetadata {
             description: "A tricky: o+ne w+ith+ :multiple malf@rmed we1.;rd things??!?".to_string(),
             projects: vec![],
             contexts: vec![],
             properties: HashMap::from([ ("num".to_string(), "1".to_string()) ]),
-        });
+        }));
     }
 
     #[test]
@@ -205,26 +209,51 @@ Do the +project_x with @alice
             completed: true,
             priority: Some('B'),
             description: "Buy groceries +qol".to_string(),
+            metadata: Some(TodoEntryMetadata {
+                description: "Buy groceries qol".to_string(),
+                projects: vec!["qol".to_string()],
+                contexts: vec![],
+                properties: HashMap::new(),
+            }),
             ..Default::default()
         });
 
         assert_eq!(entries[1], TodoEntry {
             priority: Some('C'),
             description: "Wash car +qol".to_string(),
+            metadata: Some(TodoEntryMetadata {
+                description: "Wash car qol".to_string(),
+                projects: vec!["qol".to_string()],
+                contexts: vec![],
+                properties: HashMap::new(),
+            }),
             ..Default::default()
         });
 
         assert_eq!(entries[2], TodoEntry {
             description: "Do the +project_x with @alice".to_string(),
+            metadata: Some(TodoEntryMetadata {
+                description: "Do the project_x with alice".to_string(),
+                projects: vec!["project_x".to_string()],
+                contexts: vec!["alice".to_string()],
+                properties: HashMap::new(),
+            }),
             ..Default::default()
         });
 
-        // test what happens if there is no newline
+        // test newline behaviour
         let (_, entries) = parse_file("Something to do\r\n").unwrap();
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], TodoEntry {
+            description: "Something to do".to_string(),
+            ..Default::default()
+        });
 
-        // it will not work without newlines
         let (_, entries) = parse_file("Something to do").unwrap();
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], TodoEntry {
+            description: "Something to do".to_string(),
+            ..Default::default()
+        });
     }
 }

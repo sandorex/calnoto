@@ -16,3 +16,7 @@ version = "0.1.0"
 authors = [ "Sandorex" ]
 description = "Calendar notes and todos all in one, synced using pure git"
 repository = "https://github.com/sandorex/calnoto"
+
+[workspace.dependencies]
+chrono = "0.4.43"
+nom = "8.0.0"

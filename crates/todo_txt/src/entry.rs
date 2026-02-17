@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::{collections::HashMap, fmt::Display};
 use chrono::NaiveDate;
 
 /// Parsed metadata from description, contains tags and properties
@@ -15,6 +15,13 @@ pub struct TodoEntryMetadata {
 
     /// Properties set in the task
     pub properties: HashMap<String, String>,
+}
+
+impl TodoEntryMetadata {
+    /// True if there are no tags or properties
+    pub(crate) fn is_empty(&self) -> bool {
+        self.projects.is_empty() && self.contexts.is_empty() && self.properties.is_empty()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -37,22 +44,19 @@ impl TodoEntry {
     // TODO this should probably return human-readable error
     /// Try to udpate metadata from current description, true if successful
     pub fn update_metadata(&mut self) -> bool {
-        if let Ok((_, metadata)) = crate::parser::parse_description(&self.description) {
-            self.metadata = Some(metadata);
-            true
-        } else {
-            false
+        match crate::parser::parse_description(&self.description) {
+            Ok((_, metadata)) => {
+                self.metadata = metadata;
+
+                true
+            },
+            _ => false,
         }
     }
 
     /// Parse todo entries from a file
     pub fn from_str(input: &str) -> nom::IResult<&str, Vec<Self>> {
         crate::parser::parse_file(input)
-    }
-
-    /// Get a string representation of todo entry
-    pub fn into_string(&self) -> String {
-        Into::<String>::into(self)
     }
 }
 
@@ -69,36 +73,27 @@ impl Default for TodoEntry {
     }
 }
 
-impl Into::<String> for &TodoEntry {
-    fn into(self) -> String {
-        let mut output = String::new();
-
+impl Display for &TodoEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.completed {
-            output += "x ";
+            write!(f, "x ")?;
         }
 
         if let Some(priority) = self.priority {
-            output += &format!("({}) ", priority);
+            write!(f, "({priority}) ")?;
         }
 
         // creation date has to be present if completion date is
         if let Some(creation_date) = self.creation_date {
             if let Some(completion_date) = self.completion_date {
-                output += &format!("{} ", completion_date);
+                write!(f, "{completion_date} ")?;
             }
 
-            output += &format!("{} ", creation_date);
+            write!(f, "{creation_date} ")?;
         }
 
-        output += &format!("{} ", self.description);
+        write!(f, "{}", self.description)?;
 
-        // remove any leftover whitespace
-        output.trim_end().to_string()
-    }
-}
-
-impl Into::<String> for TodoEntry {
-    fn into(self) -> String {
-        return Into::<String>::into(&self)
+        Ok(())
     }
 }
