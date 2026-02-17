@@ -1,4 +1,4 @@
 mod parser;
 mod entry;
 
-// TODO public api
+pub use entry::TodoEntry;

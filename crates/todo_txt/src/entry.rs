@@ -1,19 +1,23 @@
 use std::{collections::HashMap};
 use chrono::NaiveDate;
 
-/// Parsed metadata from description
-///
-/// Contains tags and custom properties
+/// Parsed metadata from description, contains tags and properties
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct TodoEntryMetadata {
     /// Processed description without tag prefixes or properties
     pub description: String,
+
+    /// Projects referenced in the task
     pub projects: Vec<String>,
+
+    /// Contexts referenced in the task
     pub contexts: Vec<String>,
+
+    /// Properties set in the task
     pub properties: HashMap<String, String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TodoEntry {
     pub completed: bool,
 
@@ -24,57 +28,31 @@ pub struct TodoEntry {
 
     /// Raw unprocessed description of the task
     pub description: String,
+
+    /// Processed metadata of the task (includes tags and properties)
+    pub metadata: Option<TodoEntryMetadata>,
 }
 
 impl TodoEntry {
-    /// Parses description and returns metadata that contains clean description,
-    /// tags and properties
-    pub fn metadata(&self) -> TodoEntryMetadata {
-        let mut metadata = TodoEntryMetadata::default();
-
-        // NOTE manually parsing tags and properties, simpler than using nom tbh
-        for word in self.description.split_ascii_whitespace() {
-            let clean = match word.chars().next().unwrap() {
-                // project tag
-                '+' => {
-                    let clean = &word[1..];
-                    metadata.projects.push(clean.to_string());
-
-                    clean
-                },
-
-                // context tag
-                '@' => {
-                    let clean = &word[1..];
-                    metadata.contexts.push(clean.to_string());
-
-                    clean
-                },
-
-                // properties or just normal text
-                _ => match word.split_once(":") {
-                    Some((key, value)) => {
-                        if key.is_empty() || value.is_empty() {
-                            word
-                        } else {
-                            metadata.properties.insert(key.to_string(), value.to_string());
-
-                            // do not add properties to description
-                            ""
-                        }
-                    },
-                    _ => word,
-                },
-            };
-
-            if !clean.is_empty() {
-                metadata.description += &format!("{clean} ");
-            }
+    // TODO this should probably return human-readable error
+    /// Try to udpate metadata from current description, true if successful
+    pub fn update_metadata(&mut self) -> bool {
+        if let Ok((_, metadata)) = crate::parser::parse_description(&self.description) {
+            self.metadata = Some(metadata);
+            true
+        } else {
+            false
         }
+    }
 
-        metadata.description = metadata.description.trim().to_string();
+    /// Parse todo entries from a file
+    pub fn from_str(input: &str) -> nom::IResult<&str, Vec<Self>> {
+        crate::parser::parse_file(input)
+    }
 
-        metadata
+    /// Get a string representation of todo entry
+    pub fn into_string(&self) -> String {
+        Into::<String>::into(self)
     }
 }
 
@@ -86,6 +64,7 @@ impl Default for TodoEntry {
             completion_date: None,
             creation_date: None,
             description: "".to_string(),
+            metadata: None,
         }
     }
 }
@@ -121,41 +100,5 @@ impl Into::<String> for &TodoEntry {
 impl Into::<String> for TodoEntry {
     fn into(self) -> String {
         return Into::<String>::into(&self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn todo_entry_metadata() {
-        let entry = TodoEntry {
-            description: "My good @friend +jack is coming over time:2pm".to_string(),
-            ..Default::default()
-        };
-
-        assert_eq!(entry.metadata(), TodoEntryMetadata {
-            description: "My good friend jack is coming over".to_string(),
-            projects: vec!["jack".to_string()],
-            contexts: vec!["friend".to_string()],
-            properties: HashMap::from([
-                ("time".to_string(), "2pm".to_string())
-            ])
-        });
-
-        // test parsing of partial properties and weird characters
-        let entry = TodoEntry {
-            description: "A num:1 tricky: o+ne w+ith+ :multiple malf@rmed we1.;rd things??!?".to_string(),
-            ..Default::default()
-        };
-
-        assert_eq!(entry.metadata(), TodoEntryMetadata {
-            description: "A tricky: o+ne w+ith+ :multiple malf@rmed we1.;rd things??!?".to_string(),
-            properties: HashMap::from([
-                ("num".to_string(), "1".to_string())
-            ]),
-            ..Default::default()
-        });
     }
 }
