@@ -39,21 +39,19 @@ impl CalendarEntry {
     // TODO this should probably return human-readable error
     /// Try to update metadata from current description, true if successful
     pub fn update_metadata(&mut self) -> bool {
-        todo!()
-        // match crate::parser::parse_description(&self.description) {
-        //     Ok((_, metadata)) => {
-        //         self.metadata = metadata;
-        //
-        //         true
-        //     },
-        //     _ => false,
-        // }
+        match crate::parser::parse_description(&self.description) {
+            Ok((_, metadata)) => {
+                self.metadata = metadata;
+
+                true
+            },
+            _ => false,
+        }
     }
 
     /// Parse todo entries from a file
     pub fn from_str(input: &str) -> nom::IResult<&str, Vec<Self>> {
-        todo!()
-        // crate::parser::parse_file(input)
+        crate::parser::parse_file(input)
     }
 }
 

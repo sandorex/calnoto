@@ -108,11 +108,11 @@ fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
 // TODO implement display
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
-    start: NaiveDateTime,
-    end: NaiveDateTime,
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
     // TODO this probably should be a custom type so i dont lose information about the period like
     // if user enters PT24H it will overwrite it with P1D instead
-    interval: Option<TimeDelta>,
+    pub interval: Option<TimeDelta>,
 }
 
 /// Parses interval like
@@ -197,7 +197,6 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
 #[cfg(test)]
 mod tests {
     use chrono::{Datelike, Timelike};
-
     use super::*;
 
     #[test]
