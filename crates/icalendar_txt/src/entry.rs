@@ -51,7 +51,8 @@ impl CalendarEntry {
 
     /// Parse todo entries from a file
     pub fn from_str(input: &str) -> nom::IResult<&str, Vec<Self>> {
-        crate::parser::parse_file(input)
+        todo!();
+        // crate::parser::parse_file(input)
     }
 }
 

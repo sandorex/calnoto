@@ -1,5 +1,7 @@
-use nom::{IResult, Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, map_res, opt, success}, sequence::{preceded, terminated}};
+use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, map_res, opt, success}, error::ParseError, sequence::{preceded, terminated}};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
+
+use crate::error::{Error, ErrorKind, IResult};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -70,26 +72,25 @@ fn parse_timestamp(input: &str) -> IResult<&str, NaiveDateTime> {
 
 fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
     let (leftover, (raw, (yr, mon, week, day, (hr, min, sec)))) = consumed((
-        opt(terminated(map_res(digit1, str::parse::<u16>), char('Y'))),
-        opt(terminated(map_res(digit1, str::parse::<u16>), char('M'))),
-        opt(terminated(map_res(digit1, str::parse::<u16>), char('W'))),
-        opt(terminated(map_res(digit1, str::parse::<u16>), char('D'))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('Y')))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('M')))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('W')))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('D')))),
 
         opt(preceded(
             char('T'),
             (
-                opt(terminated(map_res(digit1, str::parse::<u16>), char('H'))),
-                opt(terminated(map_res(digit1, str::parse::<u16>), char('M'))),
-                opt(terminated(map_res(digit1, str::parse::<u16>), char('S'))),
+                opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('H')))),
+                opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('M')))),
+                opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('S')))),
             )
         // removing one layer of option
         )).map(|x| x.unwrap_or((None, None, None)))
     )).parse(input)?;
 
-    if raw.is_empty() {
-        // TODO this should be a better error!
-        // if nothing was consumed then no options were specified so bad format
-        Err(nom::Err::Incomplete(nom::Needed::Unknown))
+    if raw.is_empty() || raw == "T" {
+        // empty period
+        Err(nom::Err::Failure(Error { input, kind: ErrorKind::InvalidPeriod }))
     } else {
         let seconds =
             (31_557_600 * yr.unwrap_or(0) as u32) +
@@ -128,11 +129,12 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
     // parses /<datetime|date|time|Pperiod>
     fn end_parser(input: &str) -> IResult<&str, Time> {
         preceded(char('/'),
+            // TODO do i need cut here?
             alt((
                 parse_timestamp.map(|x| Into::<Time>::into(x)),
                 parse_date.map(|x| Into::<Time>::into(x)),
                 parse_time.map(|x| Into::<Time>::into(x)),
-                preceded(char('P'), parse_period).map(|x| Into::<Time>::into(x)),
+                preceded(char('P'), cut(parse_period)).map(|x| Into::<Time>::into(x)),
             ))
         ).parse(input)
     }
@@ -144,9 +146,9 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
             //
             // recurring R/<datetime|date>[/<datetime|date|time|Pperiod>]/F<period>
             (
-                preceded(tag("R/"), start_parser),
+                preceded(tag("R/"), cut(start_parser)),
                 opt(end_parser),
-                preceded(tag("/F"), parse_period).map(|x| Some(x)),
+                preceded(tag("/F"), cut(parse_period)).map(|x| Some(x)),
             ),
             // non-recurring
             // <datetime|date>[/<datetime|time|Pperiod>]
@@ -316,6 +318,16 @@ mod tests {
                 .with_minute(20).unwrap(),
             interval: None,
         })));
+
+        // NOTE this is actually working
+        // malformed
+        assert_eq!(parse_interval("2020-01-/PT2H20M"), Ok(("", Interval {
+            start: datetime.with_hour(20).unwrap(),
+            end: datetime
+                .with_hour(22).unwrap()
+                .with_minute(20).unwrap(),
+            interval: None,
+        })));
     }
 
     #[test]
@@ -333,5 +345,9 @@ mod tests {
 
         assert_eq!(parse_period("T7S"), Ok(("", TimeDelta::try_seconds(7).unwrap())));
         assert_eq!(parse_period("T2H"), Ok(("", TimeDelta::try_hours(2).unwrap())));
+
+        // assert_eq!(parse_period("T"), Err(nom::Err::Failure(Error { errors: vec![("T", ErrorKind::EmptyPeriod)] })));
+        // assert_eq!(parse_period("T2"), Err(nom::Err::Failure(Error { errors: vec![("T", ErrorKind::EmptyPeriod)] })));
+        // assert_eq!(parse_period("2T2"), Err(nom::Err::Failure(Error { errors: vec![("T", ErrorKind::EmptyPeriod)] })));
     }
 }
