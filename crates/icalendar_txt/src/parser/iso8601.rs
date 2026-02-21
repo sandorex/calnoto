@@ -1,7 +1,22 @@
-use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, map_res, opt, success}, error::ParseError, sequence::{preceded, terminated}};
+use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, map_res, opt, success}, error::{ParseError, context}, sequence::{preceded, terminated}};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
 
 use crate::error::{Error, ErrorKind, IResult};
+
+// TODO replace TimeDelta with this
+/// Holds duration (like `chrono::TimeDelta` but second, minutes etc are stored separately)
+///
+/// Converts losslessly back and forth to a ISO8601 period
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimeDuration {
+    pub years: u16,
+    pub months: u16,
+    pub weeks: u16,
+    pub days: u16,
+    pub hours: u16,
+    pub minutes: u16,
+    pub seconds: u16,
+}
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -43,28 +58,33 @@ fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
         map_res(digit1, str::parse::<u16>),
     ).parse(input)?;
 
-    // TODO panic
-    Ok((leftover, NaiveDate::from_ymd_opt(year.into(), month.into(), day.into()).unwrap()))
+    // invalid date should produce an error
+    match NaiveDate::from_ymd_opt(year.into(), month.into(), day.into()) {
+        Some(x) => Ok((leftover, x)),
+        None => Err(nom::Err::Failure(Error { input: leftover, kind: ErrorKind::InvalidDate, context: None })),
+    }
 }
 
 fn parse_time(input: &str) -> IResult<&str, NaiveTime> {
-    // TODO is this working properly? you should not be able to define sec without min
     let (leftover, (hr, min, sec)) = (
         map_res(digit1, str::parse::<u16>),
-        opt(preceded(char(':'), map_res(digit1, str::parse::<u16>)))
+        opt(preceded(char(':'), cut(map_res(digit1, str::parse::<u16>))))
             .map(|x| x.unwrap_or(0)),
-        opt(preceded(char(':'), map_res(digit1, str::parse::<u16>)))
+        opt(preceded(char(':'), cut(map_res(digit1, str::parse::<u16>))))
             .map(|x| x.unwrap_or(0))
     ).parse(input)?;
 
-    // TODO panic
-    Ok((leftover, NaiveTime::from_hms_opt(hr.into(), min.into(), sec.into()).unwrap()))
+    // invalid time should produce an error
+    match NaiveTime::from_hms_opt(hr.into(), min.into(), sec.into()) {
+        Some(x) => Ok((leftover, x)),
+        None => Err(nom::Err::Failure(Error { input: leftover, kind: ErrorKind::InvalidTime, context: None })),
+    }
 }
 
 fn parse_timestamp(input: &str) -> IResult<&str, NaiveDateTime> {
     let (leftover, (date, time)) = (
         parse_date,
-        preceded(char('T'), parse_time),
+        preceded(char('T'), cut(parse_time)),
     ).parse(input)?;
 
     Ok((leftover, NaiveDateTime::new(date, time)))
@@ -90,7 +110,7 @@ fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
 
     if raw.is_empty() || raw == "T" {
         // empty period
-        Err(nom::Err::Failure(Error { input, kind: ErrorKind::InvalidPeriod }))
+        Err(nom::Err::Failure(Error { input, kind: ErrorKind::InvalidPeriod, context: None }))
     } else {
         let seconds =
             (31_557_600 * yr.unwrap_or(0) as u32) +
@@ -106,18 +126,18 @@ fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
     }
 }
 
-// TODO implement display
+// TODO implement display (requires TimeDuration)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
-    // TODO this probably should be a custom type so i dont lose information about the period like
-    // if user enters PT24H it will overwrite it with P1D instead
+    // TODO use TimeDuration here
     pub interval: Option<TimeDelta>,
 }
 
 /// Parses interval like
 pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
+    // NOTE TODO i think this function makes things weird 
     // parses <datetime|date>
     fn start_parser(input: &str) -> IResult<&str, NaiveDateTime> {
         alt((
@@ -129,13 +149,13 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
     // parses /<datetime|date|time|Pperiod>
     fn end_parser(input: &str) -> IResult<&str, Time> {
         preceded(char('/'),
-            // TODO do i need cut here?
-            alt((
+            // TODO do i need cut here? the context is not right fit here
+            context("missing interval end", cut(alt((
                 parse_timestamp.map(|x| Into::<Time>::into(x)),
                 parse_date.map(|x| Into::<Time>::into(x)),
                 parse_time.map(|x| Into::<Time>::into(x)),
                 preceded(char('P'), cut(parse_period)).map(|x| Into::<Time>::into(x)),
-            ))
+            ))))
         ).parse(input)
     }
 
@@ -160,7 +180,6 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
         ))
     ).parse(input)?;
 
-    // TODO test if these will panic if non-existing day is reached
     let end = match end {
         // if its time then assume same date
         Some(Time::Time(x)) => NaiveDateTime::new(start.date(), x),

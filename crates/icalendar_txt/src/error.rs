@@ -1,10 +1,18 @@
 use std::fmt::{self, Debug, Display};
-use nom::error::{ErrorKind as NomErrorKind, FromExternalError, ParseError};
+use nom::error::{ContextError, ErrorKind as NomErrorKind, FromExternalError, ParseError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Error<I> {
     pub input: I,
     pub kind: ErrorKind,
+    pub context: Option<String>,
+}
+
+impl<I: core::ops::Deref<Target = str>> Error<I> {
+    /// Convert the error into `ErrorInfo`
+    pub fn info(&self, input: I, file: Option<&str>) -> ErrorInfo {
+        ErrorInfo::from_error(input, self, file)
+    }
 }
 
 /// Error context for `VerboseError`
@@ -14,13 +22,13 @@ pub enum ErrorKind {
     /// Description is empty
     EmptyDescription,
 
-    // // Invalid interval
-    // InvalidInterval(Box<Self>),
-    //
-    // // Invalid timestamp
-    // InvalidTimestamp(Box<Self>),
+    /// Time is invalid
+    InvalidTime,
 
-    /// Invalid period, or empty period
+    /// Date is invalid
+    InvalidDate,
+
+    /// Invalid or empty period
     InvalidPeriod,
 
     /// Indicates which character was expected by the `char` function
@@ -30,11 +38,20 @@ pub enum ErrorKind {
     Nom(NomErrorKind),
 }
 
+impl<I> ContextError<I> for Error<I> {
+    fn add_context(_: I, ctx: &'static str, mut other: Self) -> Self {
+        // NOTE intentionally not changing the input so the location stays correct
+        other.context = Some(ctx.to_owned());
+        other
+    }
+}
+
 impl<I> ParseError<I> for Error<I> {
     fn from_error_kind(input: I, kind: NomErrorKind) -> Self {
         Error {
             input,
             kind: ErrorKind::Nom(kind),
+            context: None,
         }
     }
 
@@ -46,6 +63,7 @@ impl<I> ParseError<I> for Error<I> {
         Error {
             input,
             kind: ErrorKind::Char(c),
+            context: None,
         }
     }
 }
@@ -60,10 +78,19 @@ impl<I, E> FromExternalError<I, E> for Error<I> {
 impl<I> fmt::Display for Error<I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
+            // if context use it over any other error
+            _ if self.context.is_some() => {
+                write!(f, "{}", self.context.as_ref().unwrap())?;
+            },
             ErrorKind::EmptyDescription => write!(f, "empty description")?,
-            ErrorKind::InvalidPeriod => write!(f, "empty period")?,
+            ErrorKind::InvalidTime => write!(f, "invalid time")?,
+            ErrorKind::InvalidDate => write!(f, "invalid date")?,
+            ErrorKind::InvalidPeriod => write!(f, "invalid period")?,
             ErrorKind::Nom(e) => match e {
                 NomErrorKind::Digit => write!(f, "expected a digit")?,
+                NomErrorKind::Alpha => write!(f, "expected a letter")?,
+                NomErrorKind::AlphaNumeric => write!(f, "expected a letter or digit")?,
+                NomErrorKind::Space => write!(f, "expected a whitespace")?,
                 _ => write!(f, "{:?}", e)?,
             },
             ErrorKind::Char(c) => write!(f, "expected '{}'", c)?,
@@ -92,11 +119,7 @@ impl From<Error<&str>> for Error<String> {
         Error {
             input: value.input.to_owned(),
             kind: value.kind,
-            // errors: value
-            //     .errors
-            //     .into_iter()
-            //     .map(|(i, e)| (i.to_owned(), e))
-            //     .collect(),
+            context: None,
         }
     }
 }
@@ -119,7 +142,7 @@ impl From<Error<&str>> for Error<String> {
 // }
 
 /// Parsed error information including line and column with preformatted error message
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorInfo {
     /// Line of the error
     pub line: usize,
@@ -133,88 +156,91 @@ pub struct ErrorInfo {
     /// Message describing the error
     pub message: String,
 
-    /// Preformatted error message
-    pub(crate) error_mesage: String,
+    /// Context for the error
+    pub context: String,
 }
 
 impl ErrorInfo {
     /// Converts error into nicer type which has position and nice error message generation
     pub fn from_error<I: core::ops::Deref<Target = str>>(input: I, e: &Error<I>, file: Option<&str>) -> Self {
-        use std::fmt::Write;
-
         let (column, line, text) = {
             let pos = input.len() - e.input.len();
 
-            // TODO limit the context to like 80chars total in case its a huge single line
-            let line_begin = (&input.as_bytes()[..pos])
-                .iter()
-                .rposition(|x| *x == b'\n')
-                .unwrap_or(0);
-
-            let line_end = (&input.as_bytes()[pos..])
-                .iter()
-                .position(|x| *x == b'\n')
-                .unwrap_or(input.len() - pos);
-
-            let text = &input[line_begin..pos + line_end];
+            // count which line is it on
             let line = (&input.as_bytes()[..pos])
                 .iter()
                 .filter(|x| **x == b'\n')
                 .count() + 1;
 
+            // find first char after newline
+            let line_begin = (&input.as_bytes()[..pos])
+                .iter()
+                .rposition(|x| *x == b'\n')
+                .map(|x| x + 1)
+                .unwrap_or(0);
+
+            // find last char before next newline
+            let line_end = (&input.as_bytes()[pos..])
+                .iter()
+                .position(|x| *x == b'\n')
+                // .map(|x| x - 1)
+                .unwrap_or(input.len() - pos);
+
+            // TODO limit the text to like 80chars total in case its a huge single line
+            let text = &input[line_begin..pos + line_end];
+
             (pos - line_begin, line, text)
         };
-
-        // pre-format the string
-        let mut result = String::new();
-
-        writeln!(&mut result,
-            "error {} at {file}{}:{}",
-            e,
-            line,
-            column,
-
-            file=if let Some(file) = file {
-                format!("{file}:")
-            } else {
-                "".to_string()
-            }
-        ).unwrap();
-
-        // print arrow pointing to position of the error
-        write!(&mut result,
-            r#" {0:<3}|
- {line:<3}| {text}
- {0:<3}| {caret:>column$}"#,
-            "",
-            text=text,
-            caret="^",
-            column=column+1
-        ).unwrap();
 
         Self {
             line,
             column: column + 1,
             file: file.map(|x| x.to_owned()),
-            error_mesage: result,
             message: format!("{e}"),
+            context: text.to_owned(),
         }
     }
 }
 
-impl PartialEq for ErrorInfo {
-    fn eq(&self, other: &Self) -> bool {
-        // NOTE intentionally not checking error_message
-        self.line == other.line &&
-            self.column == other.column &&
-            self.file == other.file &&
-            self.message == other.message
-    }
-}
+// impl PartialEq for ErrorInfo {
+//     fn eq(&self, other: &Self) -> bool {
+//         // NOTE intentionally not checking error_message
+//         self.line == other.line &&
+//             self.column == other.column &&
+//             self.file == other.file &&
+//             self.message == other.message
+//     }
+// }
 
 impl Display for ErrorInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}", self.error_mesage)
+        // show file only if defined
+        let file = if let Some(file) = &self.file {
+            format!("{file}:")
+        } else {
+            "".to_string()
+        };
+
+        writeln!(f,
+            "error {} at {file}{}:{}",
+            self.message,
+            self.line,
+            self.column,
+        )?;
+
+        // print arrow pointing to position of the error
+        write!(f,
+            r#" {0:<3}|
+ {line:<3}| {text}
+ {0:<3}| {caret:>column$}"#,
+            "",
+            line=self.line,
+            text=self.context,
+            caret="^",
+            column=self.column
+        )?;
+
+        Ok(())
     }
 }
 
@@ -266,30 +292,54 @@ mod tests {
 
     #[test]
     fn test_convert_error() {
-        // let input = "bAaa";
-        // let err = Error { input: "Aaa", kind: ErrorKind::Char('a') };
-        // assert_eq!(ErrorInfo::from_error(input, &err, None), ErrorInfo {
-        //     line: 1,
-        //     column: 2,
-        //     file: None,
-        //     message: "expected 'a'".to_string(),
-        //     error_mesage: "".to_string(),
-        //     // error_mesage: "error expected 'a' at 1:1\n    |\n 1  | bAaa\n    |  ^".to_string(),
-        // });
+        // basic single line
+        let input = "bAaa";
+        let err = Error { input: "Aaa", kind: ErrorKind::Char('a'), context: None };
+        let err_info = ErrorInfo::from_error(input, &err, None);
+        assert_eq!(&err_info, &ErrorInfo {
+            line: 1,
+            column: 2,
+            file: None,
+            message: "expected 'a'".to_string(),
+            context: "bAaa".to_string(),
+        });
 
-        // TODO error message formatting is broken here
+        // multiline input in middle
         let input = "a=1\nb2\nc=3";
-        let err = Error { input: "2\nc=3", kind: ErrorKind::Char('=') };
-        println!("{}", ErrorInfo::from_error(input, &err, None));
-        assert_eq!(ErrorInfo::from_error(input, &err, None), ErrorInfo {
+        let err = Error { input: "2\nc=3", kind: ErrorKind::Char('='), context: None };
+        let err_info = ErrorInfo::from_error(input, &err, None);
+        assert_eq!(&err_info, &ErrorInfo {
             line: 2,
             column: 2,
             file: None,
             message: "expected '='".to_string(),
-            error_mesage: "".to_string(),
+            context: "b2".to_string(),
         });
 
-        todo!()
+        // multiline test at the end
+        let input = "a=1\nb2\nc3";
+        let err = Error { input: "3", kind: ErrorKind::Char('='), context: None };
+        let err_info = ErrorInfo::from_error(input, &err, None);
+        assert_eq!(&err_info, &ErrorInfo {
+            line: 3,
+            column: 2,
+            file: None,
+            message: "expected '='".to_string(),
+            context: "c3".to_string(),
+        });
+
+        // error at end of empty line
+        let input = "a=1\n";
+        let err = Error { input: "", kind: ErrorKind::Char('='), context: None };
+        let err_info = ErrorInfo::from_error(input, &err, None);
+        println!("{err_info}");
+        assert_eq!(&err_info, &ErrorInfo {
+            line: 2,
+            column: 1,
+            file: None,
+            message: "expected '='".to_string(),
+            context: "".to_string(),
+        });
     }
 }
 

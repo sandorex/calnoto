@@ -2,7 +2,7 @@ mod iso8601;
 pub use iso8601::Interval;
 
 use iso8601::parse_interval;
-use nom::{Parser, branch::alt, bytes::complete::{tag, take_till1, take_while1}, character::complete::{alphanumeric1, anychar, char, multispace0, space0}, combinator::{all_consuming, consumed, cut, fail}, error::context, multi::separated_list0, sequence::preceded};
+use nom::{Parser, branch::alt, bytes::complete::{tag, take_till1, take_while1}, character::complete::{alphanumeric1, anychar, char, multispace0, newline, space0, space1}, combinator::{all_consuming, consumed, cut, fail}, error::context, multi::separated_list0, sequence::preceded};
 use nom_locate::LocatedSpan;
 use crate::{entry::{CalendarEntry, CalendarEntryMetadata}, error::{Error, ErrorKind}};
 
@@ -12,10 +12,10 @@ use crate::error::IResult;
 pub fn parse_description(input: &str) -> IResult<&str, Option<CalendarEntryMetadata>> {
     let mut metadata = CalendarEntryMetadata::default();
 
-    let (leftover, words) = (separated_list0(
+    let (leftover, words) = separated_list0(
         space0,
         take_till1(|x: char| x.is_whitespace()),
-    )).parse(input)?;
+    ).parse(input)?;
 
     for word in words {
         let clean = match word.chars().next().unwrap() {
@@ -66,12 +66,12 @@ pub fn parse_description(input: &str) -> IResult<&str, Option<CalendarEntryMetad
 pub fn parse_entry(input: &str) -> IResult<&str, CalendarEntry> {
     let (leftover, (interval, (description, metadata))) = (
         parse_interval,
-        preceded(space0, consumed(parse_description)),
+        preceded(space1, consumed(parse_description)),
     ).parse(input)?;
 
     // prevent empty description
-    if description.is_empty() {
-        return Err(nom::Err::Failure(Error { input, kind: ErrorKind::EmptyDescription }))
+    if description.trim().is_empty() {
+        return Err(nom::Err::Failure(Error { input, kind: ErrorKind::EmptyDescription, context: None }))
     }
 
     Ok((leftover, CalendarEntry {
@@ -84,33 +84,11 @@ pub fn parse_entry(input: &str) -> IResult<&str, CalendarEntry> {
 /// Parse file of todo entries
 pub fn parse_file(input: &str) -> IResult<&str, Vec<CalendarEntry>> {
     let (leftover, entries) = all_consuming(separated_list0(
-        multispace0,
+        newline,
         parse_entry,
     )).parse(input.trim())?;
 
     Ok((leftover, entries))
-}
-
-// pub fn test_test(input: &str) -> nom::IResult<&str, (), nom_language::error::VerboseError<&str>> {
-pub fn test_test(input: &str) -> IResult<&str, ()> {
-    let (leftover, x) = separated_list0(
-        multispace0,
-
-        alt((
-            preceded(char('-'), cut(alphanumeric1)),
-            preceded(char('+'), cut(alphanumeric1)),
-            preceded(char('>'), cut(alphanumeric1)),
-            preceded(char('<'), cut(alphanumeric1)),
-        ),
-    )).parse(input)?;
-
-    dbg!(x);
-    // let (leftover, entries) = all_consuming(separated_list0(
-    //     multispace0,
-    //     alphanumeric1,
-    // )).parse(input.trim())?;
-
-    Ok((leftover, ()))
 }
 
 #[cfg(test)]
@@ -119,25 +97,9 @@ mod tests {
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
     use nom::Finish;
 
+    use crate::error::ErrorInfo;
+
     use super::*;
-
-    #[test]
-    fn test_test_test() {
-        // TODO
-        // "2020-01- something to do" has absolutely terrible error message
-
-        let input = "-a1 -aa >a3 <\naa";
-        // let x = parse_file(input);
-        let x = test_test(input).finish();
-        dbg!(&x);
-
-        match x {
-            Err(y) => println!("{}", crate::error::convert_error(input, &y, None)),
-            _ => {},
-        }
-
-        todo!()
-    }
 
     #[test]
     fn test_parse_description() {
@@ -166,22 +128,6 @@ mod tests {
     #[test]
     fn test_parse_entry() {
         assert_eq!(parse_entry("2020-01-01T20:00 Hello there"), Ok(("", CalendarEntry {
-            interval: Interval {
-                start: NaiveDateTime::new(
-                    NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
-                    NaiveTime::from_hms_opt(20, 0, 0).unwrap()
-                ),
-                end: NaiveDateTime::new(
-                    NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(),
-                    NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-                ),
-                interval: None,
-            },
-            description: "Hello there".to_string(),
-            metadata: None,
-        })));
-
-        assert_eq!(parse_entry("2020-01-01T20:00Hello there"), Ok(("", CalendarEntry {
             interval: Interval {
                 start: NaiveDateTime::new(
                     NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
@@ -250,30 +196,51 @@ mod tests {
         })));
 
         // malformed entry
-        let input = "2020-\n01-/2020-01-01T23:00 Hello there +blah";
-        let x = parse_entry(input).finish();
+        let input = "2020-\n01-01/2020-01-01T23:00 Hello there +blah";
+        let err = parse_entry(input).finish().unwrap_err().info(input, None);
+        assert_eq!(err, ErrorInfo {
+            line: 1,
+            column: 6,
+            file: None,
+            message: "expected a digit".to_string(),
+            context: "2020-".to_string(),
+        });
 
-        println!("{}", crate::error::convert_error(input, x.as_ref().unwrap_err(), None));
+        // malformed entry
+        let input = "2020-01-01T\n";
+        let err = parse_entry(input).finish().unwrap_err().info(input, None);
+        assert_eq!(err, ErrorInfo {
+            line: 1,
+            column: 12,
+            file: None,
+            message: "expected a digit".to_string(),
+            context: "2020-01-01T".to_string(),
+        });
 
-        assert_eq!(x, Ok(("", CalendarEntry {
-            interval: Interval {
-                start: NaiveDateTime::new(
-                    NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
-                    NaiveTime::from_hms_opt(20, 0, 0).unwrap()
-                ),
-                end: NaiveDateTime::new(
-                    NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
-                    NaiveTime::from_hms_opt(23, 0, 0).unwrap()
-                ),
-                interval: None,
-            },
-            description: "Hello there +blah".to_string(),
-            metadata: Some(CalendarEntryMetadata {
-                description: "Hello there blah".to_string(),
-                projects: vec!["blah".to_string()],
-                ..Default::default()
-            }),
-        })));
+        // malformed entry
+        let input = "2020-01-01/";
+        let err = parse_entry(input).finish().unwrap_err().info(input, None);
+        assert_eq!(err, ErrorInfo {
+            line: 1,
+            column: 12,
+            file: None,
+            message: "missing interval end".to_string(),
+            context: "2020-01-01/".to_string(),
+        });
+
+        // TODO im getting invalid time instead of invalid date..
+        // malformed entry
+        let input = "2020-01-01/2020- aa";
+        let err = parse_entry(input).finish().unwrap_err().info(input, None);
+        assert_eq!(err, ErrorInfo {
+            line: 1,
+            column: 12,
+            file: None,
+            message: "missing interval end".to_string(),
+            context: "2020-01-01/".to_string(),
+        });
+
+        todo!();
     }
 
     #[test]
