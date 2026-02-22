@@ -174,7 +174,7 @@ impl Into<Time> for TimeDuration {
     }
 }
 
-fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
+pub fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
     let (leftover, (year, (month, day))) = (
         terminated(map_res(digit1, str::parse::<u16>), char('-')),
         cut((
@@ -271,7 +271,13 @@ impl Display for Interval {
                 recurrance
             )?;
         } else {
-            write!(f, "{}/{}", self.start, self.end)?;
+            write!(f,
+                "{}T{}/{}T{}",
+                self.start.date(),
+                self.start.time(),
+                self.end.date(),
+                self.end.time()
+            )?;
         }
 
         Ok(())
