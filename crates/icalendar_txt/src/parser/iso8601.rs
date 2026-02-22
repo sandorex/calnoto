@@ -1,10 +1,9 @@
-use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, map_res, opt, success}, error::{ParseError, context}, sequence::{preceded, terminated}};
+use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, fail, map_res, opt, success}, error::context, sequence::{preceded, terminated}};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
-
-use crate::error::{Error, ErrorKind, IResult};
+use crate::error::prelude::*;
 
 // TODO replace TimeDelta with this
-/// Holds duration (like `chrono::TimeDelta` but second, minutes etc are stored separately)
+/// Holds duration (like `chrono::TimeDelta` but seconds, minutes etc are stored separately)
 ///
 /// Converts losslessly back and forth to a ISO8601 period
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,10 +51,13 @@ impl Into<Time> for TimeDelta {
 }
 
 fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
-    let (leftover, (year, month, day)) = (
+    // TODO i think this one is kinda broken
+    let (leftover, (year, (month, day))) = (
         terminated(map_res(digit1, str::parse::<u16>), char('-')),
-        terminated(map_res(digit1, str::parse::<u16>), char('-')),
-        map_res(digit1, str::parse::<u16>),
+        cut((
+            terminated(map_res(digit1, str::parse::<u16>), char('-')),
+            map_res(digit1, str::parse::<u16>),
+        )),
     ).parse(input)?;
 
     // invalid date should produce an error
@@ -90,19 +92,21 @@ fn parse_timestamp(input: &str) -> IResult<&str, NaiveDateTime> {
     Ok((leftover, NaiveDateTime::new(date, time)))
 }
 
+// TODO use TimeDuration
+// TODO this could give better errors instead of InvalidPeriod of reverything
 fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
     let (leftover, (raw, (yr, mon, week, day, (hr, min, sec)))) = consumed((
-        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('Y')))),
-        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('M')))),
-        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('W')))),
-        opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('D')))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), char('Y'))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), char('M'))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), char('W'))),
+        opt(terminated(map_res(digit1, str::parse::<u16>), char('D'))),
 
         opt(preceded(
             char('T'),
             (
-                opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('H')))),
-                opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('M')))),
-                opt(terminated(map_res(digit1, str::parse::<u16>), cut(char('S')))),
+                opt(terminated(map_res(digit1, str::parse::<u16>), char('H'))),
+                opt(terminated(map_res(digit1, str::parse::<u16>), char('M'))),
+                opt(terminated(map_res(digit1, str::parse::<u16>), char('S'))),
             )
         // removing one layer of option
         )).map(|x| x.unwrap_or((None, None, None)))
@@ -137,7 +141,6 @@ pub struct Interval {
 
 /// Parses interval like
 pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
-    // NOTE TODO i think this function makes things weird 
     // parses <datetime|date>
     fn start_parser(input: &str) -> IResult<&str, NaiveDateTime> {
         alt((
@@ -148,37 +151,35 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
 
     // parses /<datetime|date|time|Pperiod>
     fn end_parser(input: &str) -> IResult<&str, Time> {
-        preceded(char('/'),
-            // TODO do i need cut here? the context is not right fit here
-            context("missing interval end", cut(alt((
-                parse_timestamp.map(|x| Into::<Time>::into(x)),
-                parse_date.map(|x| Into::<Time>::into(x)),
-                parse_time.map(|x| Into::<Time>::into(x)),
-                preceded(char('P'), cut(parse_period)).map(|x| Into::<Time>::into(x)),
-            ))))
-        ).parse(input)
+        // TODO it tries to parse /2020- as time... smh
+        alt((
+            // TODO merge parse_timestamp and parse_date here so it optionally parses time
+            preceded(char('P'), cut(parse_period)).map(|x| Into::<Time>::into(x)),
+            parse_timestamp.map(|x| Into::<Time>::into(x)),
+            parse_date.map(|x| Into::<Time>::into(x)),
+            parse_time.map(|x| Into::<Time>::into(x)),
+            context("missing end of interval", fail()),
+        )).parse(input)
     }
 
-    let (leftover, (start, end, recurrance)) = (
-        alt((
-            // NOTE this is technically not ISO8601 compliant as first argument can be
-            // a period as well but oh well
-            //
-            // recurring R/<datetime|date>[/<datetime|date|time|Pperiod>]/F<period>
-            (
-                preceded(tag("R/"), cut(start_parser)),
-                opt(end_parser),
-                preceded(tag("/F"), cut(parse_period)).map(|x| Some(x)),
-            ),
-            // non-recurring
-            // <datetime|date>[/<datetime|time|Pperiod>]
-            (
-                start_parser,
-                opt(end_parser),
-                success(None),
-            )
-        ))
-    ).parse(input)?;
+    let (leftover, (start, end, recurrance)) = alt((
+        // NOTE this is technically not ISO8601 compliant as first argument can be
+        // a period as well but oh well
+        //
+        // recurring R/<datetime|date>[/<datetime|date|time|Pperiod>]/F<period>
+        (
+            preceded(tag("R/"), cut(start_parser)),
+            opt(preceded(char('/'), end_parser)),
+            preceded(tag("/F"), cut(parse_period)).map(|x| Some(x)),
+        ),
+        // non-recurring
+        // <datetime|date>[/<datetime|time|Pperiod>]
+        (
+            start_parser,
+            opt(preceded(char('/'), cut(end_parser))),
+            success(None),
+        )
+    )).parse(input)?;
 
     let end = match end {
         // if its time then assume same date
@@ -218,6 +219,8 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
 #[cfg(test)]
 mod tests {
     use chrono::{Datelike, Timelike};
+    use nom::Finish;
+
     use super::*;
 
     #[test]
@@ -338,15 +341,31 @@ mod tests {
             interval: None,
         })));
 
-        // NOTE this is actually working
         // malformed
-        assert_eq!(parse_interval("2020-01-/PT2H20M"), Ok(("", Interval {
-            start: datetime.with_hour(20).unwrap(),
-            end: datetime
-                .with_hour(22).unwrap()
-                .with_minute(20).unwrap(),
-            interval: None,
-        })));
+        assert_eq!(
+            parse_interval("2020-01-/PT2H20M").finish(),
+            Err(Error { input: "/PT2H20M", kind: ErrorKind::Nom(NomErrorKind::Digit), context: None })
+        );
+
+        assert_eq!(
+            parse_interval("2020-01/PT2H20M").finish(),
+            Err(Error { input: "/PT2H20M", kind: ErrorKind::Char('-'), context: None })
+        );
+
+        assert_eq!(
+            parse_interval("2020-01-/PT2H20M").finish(),
+            Err(Error { input: "/PT2H20M", kind: ErrorKind::Nom(NomErrorKind::Digit), context: None })
+        );
+
+        assert_eq!(
+            parse_interval("2020-01-01/").finish(),
+            Err(Error { input: "", kind: ErrorKind::Nom(NomErrorKind::Fail), context: Some("missing end of interval".to_string()) })
+        );
+
+        assert_eq!(
+            parse_interval("2020-01-01/PT").finish(),
+            Err(Error { input: "T", kind: ErrorKind::InvalidPeriod, context: None })
+        );
     }
 
     #[test]
@@ -365,8 +384,9 @@ mod tests {
         assert_eq!(parse_period("T7S"), Ok(("", TimeDelta::try_seconds(7).unwrap())));
         assert_eq!(parse_period("T2H"), Ok(("", TimeDelta::try_hours(2).unwrap())));
 
-        // assert_eq!(parse_period("T"), Err(nom::Err::Failure(Error { errors: vec![("T", ErrorKind::EmptyPeriod)] })));
-        // assert_eq!(parse_period("T2"), Err(nom::Err::Failure(Error { errors: vec![("T", ErrorKind::EmptyPeriod)] })));
-        // assert_eq!(parse_period("2T2"), Err(nom::Err::Failure(Error { errors: vec![("T", ErrorKind::EmptyPeriod)] })));
+        // fail properly when invalid period
+        assert_eq!(parse_period("T"), Err(nom::Err::Failure(Error { input: "T", kind: ErrorKind::InvalidPeriod, context: None })));
+        assert_eq!(parse_period(""), Err(nom::Err::Failure(Error { input: "", kind: ErrorKind::InvalidPeriod, context: None })));
+        assert_eq!(parse_period("M"), Err(nom::Err::Failure(Error { input: "M", kind: ErrorKind::InvalidPeriod, context: None })));
     }
 }

@@ -2,11 +2,9 @@ mod iso8601;
 pub use iso8601::Interval;
 
 use iso8601::parse_interval;
-use nom::{Parser, branch::alt, bytes::complete::{tag, take_till1, take_while1}, character::complete::{alphanumeric1, anychar, char, multispace0, newline, space0, space1}, combinator::{all_consuming, consumed, cut, fail}, error::context, multi::separated_list0, sequence::preceded};
-use nom_locate::LocatedSpan;
-use crate::{entry::{CalendarEntry, CalendarEntryMetadata}, error::{Error, ErrorKind}};
-
-use crate::error::IResult;
+use nom::{Parser, bytes::complete::take_till1, character::complete::{multispace0, newline, space0, space1}, combinator::{all_consuming, consumed}, multi::separated_list0, sequence::preceded};
+use crate::{entry::{CalendarEntry, CalendarEntryMetadata}};
+use crate::error::prelude::*;
 
 /// Parse description of todo entry
 pub fn parse_description(input: &str) -> IResult<&str, Option<CalendarEntryMetadata>> {
@@ -84,7 +82,7 @@ pub fn parse_entry(input: &str) -> IResult<&str, CalendarEntry> {
 /// Parse file of todo entries
 pub fn parse_file(input: &str) -> IResult<&str, Vec<CalendarEntry>> {
     let (leftover, entries) = all_consuming(separated_list0(
-        newline,
+        multispace0,
         parse_entry,
     )).parse(input.trim())?;
 
@@ -95,10 +93,6 @@ pub fn parse_file(input: &str) -> IResult<&str, Vec<CalendarEntry>> {
 mod tests {
     use std::collections::HashMap;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-    use nom::Finish;
-
-    use crate::error::ErrorInfo;
-
     use super::*;
 
     #[test]
@@ -196,51 +190,30 @@ mod tests {
         })));
 
         // malformed entry
-        let input = "2020-\n01-01/2020-01-01T23:00 Hello there +blah";
-        let err = parse_entry(input).finish().unwrap_err().info(input, None);
-        assert_eq!(err, ErrorInfo {
-            line: 1,
-            column: 6,
-            file: None,
-            message: "expected a digit".to_string(),
-            context: "2020-".to_string(),
-        });
+        assert_eq!(
+            parse_entry("2020-\n01-01/2020-01-01T23:00 Hello there +blah"),
+            Err(nom::Err::Failure(Error { input: "\n01-01/2020-01-01T23:00 Hello there +blah", kind: ErrorKind::Nom(NomErrorKind::Digit), context: None }))
+        );
 
-        // malformed entry
-        let input = "2020-01-01T\n";
-        let err = parse_entry(input).finish().unwrap_err().info(input, None);
-        assert_eq!(err, ErrorInfo {
-            line: 1,
-            column: 12,
-            file: None,
-            message: "expected a digit".to_string(),
-            context: "2020-01-01T".to_string(),
-        });
+        assert_eq!(
+            parse_entry("2020-01-01T\n"),
+            Err(nom::Err::Failure(Error { input: "\n", kind: ErrorKind::Nom(NomErrorKind::Digit), context: None }))
+        );
 
-        // malformed entry
-        let input = "2020-01-01/";
-        let err = parse_entry(input).finish().unwrap_err().info(input, None);
-        assert_eq!(err, ErrorInfo {
-            line: 1,
-            column: 12,
-            file: None,
-            message: "missing interval end".to_string(),
-            context: "2020-01-01/".to_string(),
-        });
+        assert_eq!(
+            parse_entry("2020-01-01/"),
+            Err(nom::Err::Failure(Error { input: "", kind: ErrorKind::Nom(NomErrorKind::Fail), context: Some("missing end of interval".to_string()) }))
+        );
 
-        // TODO im getting invalid time instead of invalid date..
-        // malformed entry
-        let input = "2020-01-01/2020- aa";
-        let err = parse_entry(input).finish().unwrap_err().info(input, None);
-        assert_eq!(err, ErrorInfo {
-            line: 1,
-            column: 12,
-            file: None,
-            message: "missing interval end".to_string(),
-            context: "2020-01-01/".to_string(),
-        });
+        assert_eq!(
+            parse_entry("2020-01-01/2020- aa"),
+            Err(nom::Err::Failure(Error { input: " aa", kind: ErrorKind::Nom(NomErrorKind::Digit), context: None }))
+        );
 
-        todo!();
+        assert_eq!(
+            parse_entry("2020-01-01/2020-01 aa"),
+            Err(nom::Err::Failure(Error { input: " aa", kind: ErrorKind::Char('-'), context: None }))
+        );
     }
 
     #[test]
@@ -279,8 +252,5 @@ mod tests {
 
 2020-01-01T20:00/2020-01-01T23:00 Hello there
 2020-01-01T20:00/2020-01-01T23:00 Hello there"#), Ok(("", vec![entry.clone(); 3])));
-
-        // malformed entry
-        assert_eq!(parse_file(r#"2020-01/2020-01-01T23:00 Hello there"#), Ok(("", vec![entry.clone(); 3])));
     }
 }

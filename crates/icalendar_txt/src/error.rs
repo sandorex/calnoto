@@ -1,13 +1,21 @@
 use std::fmt::{self, Debug, Display};
 use nom::error::{ContextError, ErrorKind as NomErrorKind, FromExternalError, ParseError};
 
+pub mod prelude {
+    pub use nom::error::ErrorKind as NomErrorKind;
+    pub use super::{Error, ErrorKind, ErrorInfo, IResult};
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Error<I> {
     pub input: I,
     pub kind: ErrorKind,
+
+    /// Shown as the error instead of `kind`
     pub context: Option<String>,
 }
 
+#[allow(dead_code)]
 impl<I: core::ops::Deref<Target = str>> Error<I> {
     /// Convert the error into `ErrorInfo`
     pub fn info(&self, input: I, file: Option<&str>) -> ErrorInfo {
@@ -19,16 +27,9 @@ impl<I: core::ops::Deref<Target = str>> Error<I> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
 pub enum ErrorKind {
-    /// Description is empty
     EmptyDescription,
-
-    /// Time is invalid
     InvalidTime,
-
-    /// Date is invalid
     InvalidDate,
-
-    /// Invalid or empty period
     InvalidPeriod,
 
     /// Indicates which character was expected by the `char` function
@@ -102,18 +103,6 @@ impl<I> fmt::Display for Error<I> {
 
 impl<I: fmt::Debug + fmt::Display> std::error::Error for Error<I> {}
 
-// impl From<Error<&[u8]>> for Error<Vec<u8>> {
-//     fn from(value: Error<&[u8]>) -> Self {
-//         Error {
-//             errors: value
-//                 .errors
-//                 .into_iter()
-//                 .map(|(i, e)| (i.to_owned(), e))
-//                 .collect(),
-//         }
-//     }
-// }
-
 impl From<Error<&str>> for Error<String> {
     fn from(value: Error<&str>) -> Self {
         Error {
@@ -124,23 +113,6 @@ impl From<Error<&str>> for Error<String> {
     }
 }
 
-// TODO are these useful at all?
-// impl<I> ErrorConvert<Error<I>> for Error<(I, usize)> {
-//     fn convert(self) -> Error<I> {
-//         Error {
-//             errors: self.errors.into_iter().map(|(i, e)| (i.0, e)).collect(),
-//         }
-//     }
-// }
-//
-// impl<I> ErrorConvert<Error<(I, usize)>> for Error<I> {
-//     fn convert(self) -> Error<(I, usize)> {
-//         Error {
-//             errors: self.errors.into_iter().map(|(i, e)| ((i, 0), e)).collect(),
-//         }
-//     }
-// }
-
 /// Parsed error information including line and column with preformatted error message
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorInfo {
@@ -150,7 +122,7 @@ pub struct ErrorInfo {
     /// Column of the error
     pub column: usize,
 
-    /// File where the error happen (if any)
+    /// File where the error happened (if any)
     pub file: Option<String>,
 
     /// Message describing the error
@@ -202,16 +174,6 @@ impl ErrorInfo {
     }
 }
 
-// impl PartialEq for ErrorInfo {
-//     fn eq(&self, other: &Self) -> bool {
-//         // NOTE intentionally not checking error_message
-//         self.line == other.line &&
-//             self.column == other.column &&
-//             self.file == other.file &&
-//             self.message == other.message
-//     }
-// }
-
 impl Display for ErrorInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // show file only if defined
@@ -245,46 +207,6 @@ impl Display for ErrorInfo {
 }
 
 impl std::error::Error for ErrorInfo {}
-
-/// Converts `Error<I>` to string error message
-#[deprecated = "Use `ErrorInfo` instead"]
-pub fn convert_error<I: core::ops::Deref<Target = str> + Debug>(input: I, e: &Error<I>, file: Option<&str>) -> String {
-    let (column, line, text) = {
-        let pos = input.len() - e.input.len();
-
-        let line_begin = (&input.as_bytes()[..pos])
-            .iter()
-            .rposition(|x| *x == b'\n')
-            .unwrap_or(0);
-
-        let line_end = (&input.as_bytes()[pos..])
-            .iter()
-            .position(|x| *x == b'\n')
-            .unwrap_or(input.len() - pos);
-
-        let text = &input[line_begin..pos + line_end];
-        let line = (&input.as_bytes()[..pos])
-            .iter()
-            .filter(|x| **x == b'\n')
-            .count() + 1;
-
-        (pos - line_begin, line, text)
-    };
-
-    format!(
-        "error {} at {file}{line}:{column}\n{text}\n{caret:>column$}",
-        e,
-        column=column + 1,
-        caret="^",
-
-        // add file if defined
-        file=if let Some(file) = file {
-            format!("{file}:")
-        } else {
-            "".to_string()
-        }
-    )
-}
 
 #[cfg(test)]
 mod tests {
