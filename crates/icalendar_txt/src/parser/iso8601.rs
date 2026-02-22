@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Add};
 use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, fail, map_res, opt, success}, error::context, sequence::{preceded, terminated}};
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
 use crate::error::prelude::*;
 
 /// Holds duration (like `chrono::TimeDelta` but seconds, minutes etc are stored separately)
@@ -175,7 +175,6 @@ impl Into<Time> for TimeDuration {
 }
 
 fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
-    // TODO i think this one is kinda broken
     let (leftover, (year, (month, day))) = (
         terminated(map_res(digit1, str::parse::<u16>), char('-')),
         cut((
@@ -251,13 +250,32 @@ fn parse_period(input: &str) -> IResult<&str, TimeDuration> {
     }
 }
 
-// TODO implement display (requires TimeDuration)
+// TODO this struct cannot serialize into the same input as the exact interval is lost when end is
+// calculated, do i even need to bother with it?
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
-    // TODO use TimeDuration here
     pub interval: Option<TimeDuration>,
+}
+
+impl Display for Interval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(recurrance) = &self.interval {
+            write!(f,
+                "R/{}T{}/{}T{}/F{}",
+                self.start.date(),
+                self.start.time(),
+                self.end.date(),
+                self.end.time(),
+                recurrance
+            )?;
+        } else {
+            write!(f, "{}/{}", self.start, self.end)?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Parses interval like
@@ -272,7 +290,6 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
 
     // parses /<datetime|date|time|Pperiod>
     fn end_parser(input: &str) -> IResult<&str, Time> {
-        // TODO it tries to parse /2020- as time... smh
         alt((
             // TODO merge parse_timestamp and parse_date here so it optionally parses time
             preceded(char('P'), cut(parse_period)).map(|x| Into::<Time>::into(x)),
@@ -515,5 +532,14 @@ mod tests {
         assert_eq!(parse_period("T"), Err(nom::Err::Failure(Error { input: "T", kind: ErrorKind::InvalidPeriod, context: None })));
         assert_eq!(parse_period(""), Err(nom::Err::Failure(Error { input: "", kind: ErrorKind::InvalidPeriod, context: None })));
         assert_eq!(parse_period("M"), Err(nom::Err::Failure(Error { input: "M", kind: ErrorKind::InvalidPeriod, context: None })));
+    }
+
+    #[test]
+    fn test_serialize_interval() {
+        let input = "R/2020-01-01T00:00:00/2020-01-02T00:00:00/F1W";
+        assert_eq!(format!("{}", parse_interval(input).unwrap().1), input);
+
+        let input = "2020-01-01T00:00:00/2020-01-02T00:00:00";
+        assert_eq!(format!("{}", parse_interval(input).unwrap().1), input);
     }
 }
