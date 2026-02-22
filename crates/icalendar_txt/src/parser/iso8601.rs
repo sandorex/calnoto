@@ -1,13 +1,13 @@
+use std::{fmt::Display, ops::Add};
 use nom::{Parser, branch::alt, bytes::complete::tag, character::complete::{char, digit1}, combinator::{consumed, cut, fail, map_res, opt, success}, error::context, sequence::{preceded, terminated}};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
 use crate::error::prelude::*;
 
-// TODO replace TimeDelta with this
 /// Holds duration (like `chrono::TimeDelta` but seconds, minutes etc are stored separately)
 ///
 /// Converts losslessly back and forth to a ISO8601 period
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TimeDuration {
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TimeDuration {
     pub years: u16,
     pub months: u16,
     pub weeks: u16,
@@ -17,13 +17,137 @@ struct TimeDuration {
     pub seconds: u16,
 }
 
+#[allow(dead_code)]
+impl TimeDuration {
+    pub fn years(years: u16) -> Self {
+        Self {
+            years,
+            ..Default::default()
+        }
+    }
+
+    pub fn months(months: u16) -> Self {
+        Self {
+            months,
+            ..Default::default()
+        }
+    }
+
+    pub fn weeks(weeks: u16) -> Self {
+        Self {
+            weeks,
+            ..Default::default()
+        }
+    }
+
+    pub fn days(days: u16) -> Self {
+        Self {
+            days,
+            ..Default::default()
+        }
+    }
+
+    pub fn hours(hours: u16) -> Self {
+        Self {
+            hours,
+            ..Default::default()
+        }
+    }
+
+    pub fn minutes(minutes: u16) -> Self {
+        Self {
+            minutes,
+            ..Default::default()
+        }
+    }
+
+    pub fn seconds(seconds: u16) -> Self {
+        Self {
+            seconds,
+            ..Default::default()
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.years == 0
+            && self.months == 0
+            && self.weeks == 0
+            && self.days == 0
+            && self.hours == 0
+            && self.minutes == 0
+            && self.seconds == 0
+    }
+}
+
+// TODO test
+impl Display for TimeDuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_zero() {
+            // something has to be written for it to be valid
+            write!(f, "T{}S", self.seconds)?;
+        } else {
+            if self.years > 0 {
+                write!(f, "{}Y", self.years)?;
+            }
+
+            if self.months > 0 {
+                write!(f, "{}M", self.months)?;
+            }
+
+            if self.weeks > 0 {
+                write!(f, "{}W", self.weeks)?;
+            }
+
+            if self.days > 0 {
+                write!(f, "{}D", self.days)?;
+            }
+
+            if self.hours > 0 || self.minutes > 0 || self.seconds > 0 {
+                write!(f, "T")?;
+
+                if self.hours > 0 {
+                    write!(f, "{}H", self.hours)?;
+                }
+                if self.minutes > 0 {
+                    write!(f, "{}M", self.minutes)?;
+                }
+                if self.seconds > 0 {
+                    write!(f, "{}S", self.seconds)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// allow adding TimeDuration to chrono
+impl Add<TimeDuration> for chrono::NaiveDateTime {
+    type Output = Option<Self>;
+
+    fn add(self, rhs: TimeDuration) -> Self::Output {
+        use chrono::{Months, Days};
+
+        // just add together all the parts
+        Some(
+            self.checked_add_months(Months::new((rhs.years * 12).into()))?
+            .checked_add_months(Months::new(rhs.months.into()))?
+            .checked_add_days(Days::new((rhs.weeks * 7).into()))?
+            .checked_add_days(Days::new((rhs.days).into()))?
+            + std::time::Duration::from_hours(rhs.hours.into())
+            + std::time::Duration::from_mins(rhs.minutes.into())
+            + std::time::Duration::from_secs(rhs.seconds.into())
+        )
+    }
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 enum Time {
     DateTime(NaiveDateTime),
     Date(NaiveDate),
     Time(NaiveTime),
-    Period(TimeDelta),
+    Period(TimeDuration),
 }
 
 impl Into<Time> for NaiveDateTime {
@@ -44,7 +168,7 @@ impl Into<Time> for NaiveTime {
     }
 }
 
-impl Into<Time> for TimeDelta {
+impl Into<Time> for TimeDuration {
     fn into(self) -> Time {
         Time::Period(self)
     }
@@ -92,9 +216,8 @@ fn parse_timestamp(input: &str) -> IResult<&str, NaiveDateTime> {
     Ok((leftover, NaiveDateTime::new(date, time)))
 }
 
-// TODO use TimeDuration
 // TODO this could give better errors instead of InvalidPeriod of reverything
-fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
+fn parse_period(input: &str) -> IResult<&str, TimeDuration> {
     let (leftover, (raw, (yr, mon, week, day, (hr, min, sec)))) = consumed((
         opt(terminated(map_res(digit1, str::parse::<u16>), char('Y'))),
         opt(terminated(map_res(digit1, str::parse::<u16>), char('M'))),
@@ -116,17 +239,15 @@ fn parse_period(input: &str) -> IResult<&str, TimeDelta> {
         // empty period
         Err(nom::Err::Failure(Error { input, kind: ErrorKind::InvalidPeriod, context: None }))
     } else {
-        let seconds =
-            (31_557_600 * yr.unwrap_or(0) as u32) +
-            (2_629_800 * mon.unwrap_or(0) as u32) +
-            (604_800 * week.unwrap_or(0) as u32) +
-            (86_400 * day.unwrap_or(0) as u32) +
-            (3_600 * hr.unwrap_or(0) as u32) +
-            (60 * min.unwrap_or(0) as u32) +
-            sec.unwrap_or(0) as u32;
-
-        // TODO this could panic
-        Ok((leftover, TimeDelta::new(seconds as i64, 0).unwrap()))
+        Ok((leftover, TimeDuration {
+            years: yr.unwrap_or(0),
+            months: mon.unwrap_or(0),
+            weeks: week.unwrap_or(0),
+            days: day.unwrap_or(0),
+            hours: hr.unwrap_or(0),
+            minutes: min.unwrap_or(0),
+            seconds: sec.unwrap_or(0),
+        }))
     }
 }
 
@@ -136,7 +257,7 @@ pub struct Interval {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     // TODO use TimeDuration here
-    pub interval: Option<TimeDelta>,
+    pub interval: Option<TimeDuration>,
 }
 
 /// Parses interval like
@@ -189,7 +310,13 @@ pub fn parse_interval(input: &str) -> IResult<&str, Interval> {
         Some(Time::Date(x)) => NaiveDateTime::from(x),
 
         // if its a period just do the math
-        Some(Time::Period(x)) => NaiveDateTime::from(start + x),
+        Some(Time::Period(x)) => {
+            // TODO idk if this is the nicest way to do this
+            match start + x {
+                Some(end) => end,
+                None => return Err(nom::Err::Failure(Error { input: leftover, kind: ErrorKind::InvalidPeriod, context: None }))
+            }
+        },
 
         // do not touch full datetime
         Some(Time::DateTime(x)) => x,
@@ -259,35 +386,35 @@ mod tests {
         assert_eq!(parse_interval("R/2020-01-01/F2D"), Ok(("", Interval {
             start: datetime.with_hour(0).unwrap(),
             end: datetime.with_day(2).unwrap(),
-            interval: Some(TimeDelta::days(2)),
+            interval: Some(TimeDuration::days(2)),
         })));
 
         // R/2020-01-01T20:00/F2D
         assert_eq!(parse_interval("R/2020-01-01T20:00/F2D"), Ok(("", Interval {
             start: datetime.with_hour(20).unwrap(),
             end: datetime.with_day(2).unwrap(),
-            interval: Some(TimeDelta::days(2)),
+            interval: Some(TimeDuration::days(2)),
         })));
 
         // R/2020-01-01T20:00/22:00/F2D
         assert_eq!(parse_interval("R/2020-01-01T20:00/22:00/F2D"), Ok(("", Interval {
             start: datetime.with_hour(20).unwrap(),
             end: datetime.with_hour(22).unwrap(),
-            interval: Some(TimeDelta::days(2)),
+            interval: Some(TimeDuration::days(2)),
         })));
 
         // R/2020-01-01T20:00/2020-01-02/F2D
         assert_eq!(parse_interval("R/2020-01-01T20:00/2020-01-02/F2D"), Ok(("", Interval {
             start: datetime.with_hour(20).unwrap(),
             end: datetime.with_day(2).unwrap(),
-            interval: Some(TimeDelta::days(2)),
+            interval: Some(TimeDuration::days(2)),
         })));
 
         // R/2020-01-01T20:00/2020-01-01T22:00/F2D
         assert_eq!(parse_interval("R/2020-01-01T20:00/2020-01-01T22:00/F2D"), Ok(("", Interval {
             start: datetime.with_hour(20).unwrap(),
             end: datetime.with_hour(22).unwrap(),
-            interval: Some(TimeDelta::days(2)),
+            interval: Some(TimeDuration::days(2)),
         })));
 
         // 2020-01-01
@@ -371,18 +498,18 @@ mod tests {
     #[test]
     fn test_parse_period() {
         // NOTE i know this is ugly but eh
-        assert_eq!(parse_period("1Y2M3W4DT5H6M7S"), Ok(("", TimeDelta::try_seconds(
-            (31_557_600 * 1) +
-            (2_629_800 * 2) +
-            (604_800 * 3) +
-            (86_400 * 4) +
-            (3_600 * 5) +
-            (60 * 6) +
-            7
-        ).unwrap())));
+        assert_eq!(parse_period("1Y2M3W4DT5H6M7S"), Ok(("", TimeDuration {
+            years: 1,
+            months: 2,
+            weeks: 3,
+            days: 4,
+            hours: 5,
+            minutes: 6,
+            seconds: 7,
+        })));
 
-        assert_eq!(parse_period("T7S"), Ok(("", TimeDelta::try_seconds(7).unwrap())));
-        assert_eq!(parse_period("T2H"), Ok(("", TimeDelta::try_hours(2).unwrap())));
+        assert_eq!(parse_period("T7S"), Ok(("", TimeDuration::seconds(7))));
+        assert_eq!(parse_period("T2H"), Ok(("", TimeDuration::hours(2))));
 
         // fail properly when invalid period
         assert_eq!(parse_period("T"), Err(nom::Err::Failure(Error { input: "T", kind: ErrorKind::InvalidPeriod, context: None })));
