@@ -126,6 +126,14 @@ impl Add<TimeDuration> for chrono::NaiveDateTime {
     type Output = Option<Self>;
 
     fn add(self, rhs: TimeDuration) -> Self::Output {
+        self + &rhs
+    }
+}
+
+impl Add<&TimeDuration> for chrono::NaiveDateTime {
+    type Output = Option<Self>;
+
+    fn add(self, rhs: &TimeDuration) -> Self::Output {
         use chrono::{Months, Days};
 
         // just add together all the parts
