@@ -216,6 +216,7 @@ fn parse_timestamp(input: &str) -> IResult<&str, NaiveDateTime> {
 }
 
 // TODO this could give better errors instead of InvalidPeriod of reverything
+// maybe verify() could work and then rename error to EmptyPeriod
 fn parse_period(input: &str) -> IResult<&str, TimeDuration> {
     let (leftover, (raw, (yr, mon, week, day, (hr, min, sec)))) = consumed((
         opt(terminated(map_res(digit1, str::parse::<u16>), char('Y'))),

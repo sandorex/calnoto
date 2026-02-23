@@ -5,7 +5,6 @@ members = [
     "core",
     "xtask",
     "crates/icalendar_txt",
-    "crates/todo_txt",
     "crates/sync",
     "crates/cli",
 ]

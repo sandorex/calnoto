@@ -1,15 +1,17 @@
-use nom::{Parser, character::{char, complete::{multispace0, one_of, space0, space1}}, combinator::{all_consuming, consumed, opt}, multi::separated_list0, sequence::{delimited, preceded, terminated}};
+use nom::{Parser, character::complete::{char, multispace1, one_of, space0}, combinator::{all_consuming, consumed, opt}, multi::separated_list0, sequence::{delimited, terminated}};
 use crate::{entry::TodoEntry, error::prelude::*, parser::iso8601::parse_date};
 use super::parse_description;
 
 pub fn parse_todo_entry(input: &str) -> IResult<&str, TodoEntry> {
     let (leftover, (completed, priority, completion_date, creation_date, (description, metadata))) = (
-        // TODO sohuld probably use space1 or multispace1?
         // parse completion mark
         opt(terminated(char('x'), space0)).map(|x| x.is_some()),
 
         // parse priority
-        opt(terminated(delimited(char('('), one_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), char(')')), multispace0)),
+        opt(terminated(
+            delimited(char('('), one_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), char(')')),
+            space0
+        )),
 
         // parse completion date
         opt(terminated(parse_date, space0)),
@@ -19,6 +21,11 @@ pub fn parse_todo_entry(input: &str) -> IResult<&str, TodoEntry> {
 
         consumed(parse_description),
     ).parse(input)?;
+
+    // prevent empty description
+    if description.trim().is_empty() {
+        return Err(nom::Err::Failure(Error { input: leftover, kind: ErrorKind::EmptyDescription, context: None }))
+    }
 
     Ok((leftover, TodoEntry {
         completed,
@@ -33,7 +40,7 @@ pub fn parse_todo_entry(input: &str) -> IResult<&str, TodoEntry> {
 /// Parse file of todo entries
 pub fn parse_todo_file(input: &str) -> IResult<&str, Vec<TodoEntry>> {
     let (leftover, entries) = all_consuming(separated_list0(
-        multispace0,
+        multispace1,
         parse_todo_entry,
     )).parse(input.trim())?;
 
@@ -45,7 +52,6 @@ mod tests {
     use std::collections::HashMap;
     use chrono::NaiveDate;
     use crate::entry::EntryMetadata;
-
     use super::*;
 
     #[test]
@@ -83,7 +89,94 @@ mod tests {
                 }),
             }))
         );
+
+        assert_eq!(
+            parse_todo_entry("Yadda yadda"),
+            Ok(("", TodoEntry {
+                completed: false,
+                priority: None,
+                completion_date: None,
+                creation_date: None,
+                description: "Yadda yadda".to_string(),
+                metadata: None,
+            }))
+        );
+
+        assert_eq!(
+            parse_todo_entry("(A) Yadda yadda"),
+            Ok(("", TodoEntry {
+                completed: false,
+                priority: Some('A'),
+                completion_date: None,
+                creation_date: None,
+                description: "Yadda yadda".to_string(),
+                metadata: None,
+            }))
+        );
+
+        assert_eq!(
+            parse_todo_entry("(A)"),
+            Err(nom::Err::Failure(Error { input: "", kind: ErrorKind::EmptyDescription, context: None }))
+        );
+
+        assert_eq!(
+            parse_todo_entry("(A) "),
+            Err(nom::Err::Failure(Error { input: "", kind: ErrorKind::EmptyDescription, context: None }))
+        );
+
+        assert_eq!(
+            parse_todo_entry("x"),
+            Err(nom::Err::Failure(Error { input: "", kind: ErrorKind::EmptyDescription, context: None }))
+        );
     }
 
-    // TODO test_parse_todo_file
+    #[test]
+    fn test_parse_todo_file() {
+        let result = parse_todo_file(r"x (A) this is kinda cool
+
+(B) some other task
+yet another task
+
+		
+it should be working even with so many newlines and tabs
+
+");
+
+        assert!(result.is_ok());
+        let (leftover, entries) = result.unwrap();
+
+        assert_eq!(leftover, "");
+        assert_eq!(entries[0], TodoEntry {
+            completed: true,
+            priority: Some('A'),
+            completion_date: None,
+            creation_date: None,
+            description: "this is kinda cool".to_string(),
+            metadata: None,
+        });
+        assert_eq!(entries[1], TodoEntry {
+            completed: false,
+            priority: Some('B'),
+            completion_date: None,
+            creation_date: None,
+            description: "some other task".to_string(),
+            metadata: None,
+        });
+        assert_eq!(entries[2], TodoEntry {
+            completed: false,
+            priority: None,
+            completion_date: None,
+            creation_date: None,
+            description: "yet another task".to_string(),
+            metadata: None,
+        });
+        assert_eq!(entries[3], TodoEntry {
+            completed: false,
+            priority: None,
+            completion_date: None,
+            creation_date: None,
+            description: "it should be working even with so many newlines and tabs".to_string(),
+            metadata: None,
+        });
+    }
 }

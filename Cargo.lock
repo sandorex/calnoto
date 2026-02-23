@@ -553,14 +553,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "todo_txt"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "nom",
-]
-
-[[package]]
 name = "toml"
 version = "0.9.11+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

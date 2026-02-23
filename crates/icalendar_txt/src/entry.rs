@@ -50,7 +50,7 @@ impl CalendarEntry {
         }
     }
 
-    /// Parse todo entries from a file
+    /// Parse calendar entries from str
     pub fn from_str(input: &str) -> Result<Vec<Self>, crate::error::Error<&str>> {
         crate::parser::parse_calendar_file(input).finish().map(|(_, x)| x)
     }
@@ -95,8 +95,8 @@ impl TodoEntry {
         }
     }
 
-    /// Parse todo entries from a file
-    pub fn from_str(input: &str) -> Result<Vec<Self>, crate::error::Error<&str>> {
+    /// Parse calendar entries from str
+    pub fn from_str(input: &str) -> Result<Vec<Self>, Error<&str>> {
         crate::parser::parse_todo_file(input).finish().map(|(_, x)| x)
     }
 }
